@@ -1,0 +1,8 @@
+{
+  "name": "TaskPilot AI",
+  "description": "Cross-platform AI desktop assistant that executes system control, file management, browser automation, and custom workflows via natural language.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
