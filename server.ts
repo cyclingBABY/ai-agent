@@ -691,10 +691,71 @@ app.post("/api/agent/command", async (req, res) => {
   }
 
   try {
-    const prompt = `Convert this natural language command from the user of a desktop operating system into a detailed sequential list of task steps to achieve what they want: "${command}".
-Break down complex requests into standard files/systems operations.
-Your output must match this strict JSON schema design:
+    const prompt = `System Prompt: Computer Control Agent
+
+You are an AI Computer Control Agent running on a user's computer.
+
+Your purpose is to help users perform tasks on their device by generating structured action plans that can be executed by the application's automation engine.
+
+## Rules
+
+1. Never directly execute actions.
+2. Convert user requests into a step-by-step action plan.
+3. Ask for confirmation before:
+
+   * Deleting files
+   * Modifying system settings
+   * Sending emails
+   * Installing software
+   * Making purchases
+   * Restarting or shutting down the computer
+4. Always explain your intended actions.
+5. If a task is ambiguous, ask clarifying questions.
+6. Use the minimum actions necessary to complete the task.
+7. Stop immediately if an action fails and report the error.
+
+## Available Actions
+
+You may use only these actions:
+
+### Application Actions
+- open_application (params: application)
+- close_application (params: application)
+
+### Browser Actions
+- open_url (params: url)
+- search_web (params: query)
+
+### File Actions
+- create_folder (params: path)
+- move_file (params: source, destination)
+
+### Document Actions
+- create_document (params: type, title)
+
+### System Actions
+- set_volume (params: value)
+- lock_computer (no params)
+
+## Planning Format
+
+Always return:
 {
+  "goal": "User goal",
+  "steps": [
+    {
+      "action": "action_name",
+      "parameters": {}
+    }
+  ],
+  "confirmation_required": true or false
+}
+
+Convert user command "${command}" into this structured plan format.`;
+    // Cleaned up old prompt instructions
+// Deprecated prompt parts:
+/*
+/*
   "originalCommand": "original request here",
   "reasoning": "brief high level outline of actions planned to fulfill the prompt",
   "steps": [
@@ -716,8 +777,135 @@ Set "requiresApproval": true if any step performs sensitive actions. Sensitive a
 2. Direct system operations (shutting down, locking workstation, rebooting system).
 3. Accessing external APIs or sending raw script runs.
 Set "requiresApproval": false for safe commands like opening browsers, navigating folders, raising volumes, simple screen reads, or launching MS Word.`;
+*/
 
     const gResponse = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            goal: { type: Type.STRING },
+            steps: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  action: { type: Type.STRING },
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      application: { type: Type.STRING },
+                      url: { type: Type.STRING },
+                      query: { type: Type.STRING },
+                      path: { type: Type.STRING },
+                      source: { type: Type.STRING },
+                      destination: { type: Type.STRING },
+                      type: { type: Type.STRING },
+                      title: { type: Type.STRING },
+                      value: { type: Type.INTEGER }
+                    }
+                  }
+                },
+                required: ["action", "parameters"]
+              }
+            },
+            confirmation_required: { type: Type.BOOLEAN }
+          },
+          required: ["goal", "steps", "confirmation_required"]
+        }
+      }
+    });
+
+    const parsedResult = JSON.parse(gResponse.text || "{}");
+    const stepsMapped: TaskStep[] = (parsedResult.steps || []).map((s: any, idx: number) => {
+      let mappedAction: TaskStep["action"] = "custom_script";
+      let target = "";
+      let details = "";
+      let requiresApproval = !!parsedResult.confirmation_required;
+
+      const params = s.parameters || {};
+
+      switch (s.action) {
+        case "open_application":
+          mappedAction = "open_app";
+          target = params.application || "Unknown App";
+          details = `Command automation requests launching the application "${target}".`;
+          break;
+        case "close_application":
+          mappedAction = "close_app";
+          target = params.application || "Unknown App";
+          details = `Command automation requests terminating the application "${target}".`;
+          break;
+        case "open_url":
+          mappedAction = "browser_action";
+          target = params.url || "https://www.google.com";
+          details = `Navigating to website destination: "${target}".`;
+          break;
+        case "search_web":
+          mappedAction = "browser_action";
+          const q = params.query || "";
+          target = q ? `https://www.google.com/search?q=${encodeURIComponent(q)}` : "https://www.google.com";
+          details = `Searching the web via Chrome browser query: "${q}".`;
+          break;
+        case "create_folder":
+          mappedAction = "manage_files";
+          target = params.path || "C:/Projects";
+          details = `Desktop filesystem directory allocation path: "${target}".`;
+          break;
+        case "move_file":
+          mappedAction = "manage_files";
+          target = params.source || "";
+          details = `Relocating file element from "${params.source}" to "${params.destination}".`;
+          requiresApproval = true;
+          break;
+        case "create_document":
+          mappedAction = "custom_script";
+          target = params.title || "Meeting Notes";
+          details = `Initiating native local document template of type "${params.type || "Word"}" and title "${target}".`;
+          break;
+        case "set_volume":
+          mappedAction = "system_control";
+          target = "Volume Controller";
+          const val = params.value !== undefined ? params.value : 50;
+          details = `Adjust dynamic mixer control to system audio sound level of ${val}%.`;
+          requiresApproval = true;
+          break;
+        case "lock_computer":
+          mappedAction = "system_control";
+          target = "System Lock";
+          details = `Invoking lock screen protocol to secure workstation environment.`;
+          requiresApproval = true;
+          break;
+        default:
+          mappedAction = "custom_script";
+          target = s.action || "Generic Command";
+          details = `Automated custom step details: ${JSON.stringify(params)}`;
+          break;
+      }
+
+      return {
+        id: `step-${idx + 1}`,
+        action: mappedAction,
+        status: "pending",
+        target,
+        details,
+        requiresApproval,
+        explanation: `Executed under guidelines of structured computer control plan. Goal: "${parsedResult.goal || command}".`
+      };
+    });
+
+    const parsedPlan: TaskPlan = {
+      originalCommand: command,
+      reasoning: `Goal: "${parsedResult.goal}". Safe structured layout generated. Rule confirmations enforced: ${parsedResult.confirmation_required ? "YES" : "NO"}.`,
+      steps: stepsMapped
+    };
+
+    res.json({ plan: parsedPlan });
+
+    /* const deprecated_gResponse = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
@@ -753,7 +941,7 @@ Set "requiresApproval": false for safe commands like opening browsers, navigatin
     });
 
     const parsedPlan: TaskPlan = JSON.parse(gResponse.text || "{}");
-    res.json({ plan: parsedPlan });
+    res.json({ plan: parsedPlan }); */
 
   } catch (err: any) {
     console.error("Gemini Planning Service error:", err);

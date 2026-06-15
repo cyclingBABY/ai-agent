@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Folder, File, Terminal, Globe, Volume2, Sun, Laptop, ShieldCheck, HelpCircle, ArrowRight, Eye, RefreshCw, Layers } from "lucide-react";
 import { DiskFile, SystemState } from "../types";
 
@@ -26,6 +26,17 @@ export default function DesktopSimulator({
   const [selectedFolder, setSelectedFolder] = useState<string>("/");
   const [currentBrowserUrl, setCurrentBrowserUrl] = useState<string>(systemState.openedUrl);
   const [browserHistory, setBrowserHistory] = useState<string[]>([systemState.openedUrl]);
+
+  // Keep browser URL input bar synchronized with external automated browser actions
+  useEffect(() => {
+    setCurrentBrowserUrl(systemState.openedUrl);
+    setBrowserHistory((prev) => {
+      if (prev[prev.length - 1] !== systemState.openedUrl) {
+        return [...prev, systemState.openedUrl];
+      }
+      return prev;
+    });
+  }, [systemState.openedUrl]);
 
   // Navigate back to parent folder helper
   const navigateToParent = () => {
@@ -282,27 +293,74 @@ export default function DesktopSimulator({
 
               {/* Dynamic Site Representation */}
               <div className="p-4 flex-1 flex flex-col justify-center items-center text-center">
-                {currentBrowserUrl.includes("google.com/search") ? (
-                  <div className="w-full text-left space-y-3 font-sans">
-                    <h3 className="text-xs font-semibold text-slate-400 mb-2">Google Search Results</h3>
-                    <div className="p-2.5 bg-[#161920]/40 rounded border border-slate-800/50">
-                      <span className="text-blue-400 text-xs font-medium hover:underline cursor-pointer">
-                        TaskPilot AI Release Notes: Installation guide and windows automation API...
-                      </span>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Find full instructions for deploying desktop setups using electron builder setup execution bundles...
-                      </p>
+                {currentBrowserUrl.includes("google.com/search") ? (() => {
+                  let query = "latest AI trends";
+                  try {
+                    const params = new URLSearchParams(currentBrowserUrl.split("?")[1]);
+                    query = params.get("q") || "latest AI trends";
+                  } catch (e) {}
+
+                  const formattedQuery = decodeURIComponent(query).replace(/\+/g, " ");
+                  
+                  return (
+                    <div className="w-full text-left space-y-3 font-sans">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
+                        <h3 className="text-xs font-semibold text-slate-400">Google Search Results</h3>
+                        <span className="text-[10px] text-slate-500 bg-slate-900 px-2 py-0.5 rounded font-mono">
+                          Query: "{formattedQuery}"
+                        </span>
+                      </div>
+                      
+                      <div 
+                        onClick={() => {
+                          const dest = `https://en.wikipedia.org/wiki/${encodeURIComponent(formattedQuery)}`;
+                          setCurrentBrowserUrl(dest);
+                          onUpdateState({ openedUrl: dest });
+                        }}
+                        className="p-3 bg-[#161920]/40 hover:bg-blue-600/5 hover:border-blue-500/30 rounded border border-slate-800/50 cursor-pointer transition"
+                      >
+                        <span className="text-blue-400 text-xs font-medium hover:underline">
+                          Wikipedia: {formattedQuery} - Definitions, Details, and Context
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Comprehensive documentation of {formattedQuery} including historical background, modern practical implications, and related technologies.
+                        </p>
+                      </div>
+
+                      <div 
+                        onClick={() => {
+                          const dest = `https://techcrunch.com/tag/${encodeURIComponent(formattedQuery)}`;
+                          setCurrentBrowserUrl(dest);
+                          onUpdateState({ openedUrl: dest });
+                        }}
+                        className="p-3 bg-[#161920]/40 hover:bg-blue-600/5 hover:border-blue-500/30 rounded border border-slate-800/50 cursor-pointer transition"
+                      >
+                        <span className="text-blue-400 text-xs font-medium hover:underline">
+                          Latest News, Updates, and Industry Reports on: "{formattedQuery}"
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Read deep dives, trending debates, vendor evaluations, and expert panels exploring the next-gen innovations of {formattedQuery}.
+                        </p>
+                      </div>
+
+                      <div 
+                        onClick={() => {
+                          const dest = `https://github.com/topics/${encodeURIComponent(formattedQuery)}`;
+                          setCurrentBrowserUrl(dest);
+                          onUpdateState({ openedUrl: dest });
+                        }}
+                        className="p-3 bg-[#161920]/40 hover:bg-blue-600/5 hover:border-blue-500/30 rounded border border-slate-800/50 cursor-pointer transition"
+                      >
+                        <span className="text-blue-400 text-xs font-medium hover:underline">
+                          GitHub - Open Source Repository Directory: {formattedQuery}
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Explore collaborative codebases, tool bundles, orchestration libraries, and community checklists built around the {formattedQuery} ecosystem.
+                        </p>
+                      </div>
                     </div>
-                    <div className="p-2.5 bg-[#161920]/40 rounded border border-slate-800/50">
-                      <span className="text-blue-400 text-xs font-medium hover:underline cursor-pointer">
-                        Artificial Intelligence Advancements in 2026: Agent Frameworks
-                      </span>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        How multi-agent architectures manage planning tasks securely and coordinate computer vision OCR nodes.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
+                  );
+                })() : (
                   <div className="space-y-3 max-w-sm font-sans">
                     <div className="w-10 h-10 rounded-full bg-blue-600/15 border border-blue-500/30 flex items-center justify-center mx-auto text-blue-400">
                       <Globe className="w-5 h-5 text-blue-500" />

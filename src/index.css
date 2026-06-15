@@ -6,11 +6,28 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+:root {
+  /* Default Cyber Blue values */
+  --brand-primary: #2563eb;
+  --brand-primary-hover: #1d4ed8;
+  --brand-bg: #0A0B0E;
+  --brand-panel: #111319;
+  --brand-card: #161920;
+  --brand-border: rgba(30, 41, 59, 0.7);
+  --brand-text: #cbd5e1;
+  --brand-accent: #3b82f6;
+  --brand-accent-hover: #60a5fa;
+  --brand-accent-rgb: 59, 130, 246;
+  --brand-accent-glow: rgba(37, 99, 235, 0.15);
+  --brand-scrollbar-thumb: rgba(37, 99, 235, 0.3);
+}
+
 body {
   font-family: var(--font-sans);
-  background-color: #0A0B0E;
-  color: #cbd5e1;
+  background-color: var(--brand-bg);
+  color: var(--brand-text);
   overflow: hidden;
+  transition: background-color 0.4s ease, color 0.4s ease;
 }
 
 /* Custom gorgeous scrollbar styled for elegant dark dashboard */
@@ -22,9 +39,93 @@ body {
   background: rgba(15, 17, 23, 0.5);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(37, 99, 235, 0.3);
+  background: var(--brand-scrollbar-thumb) !important;
   border-radius: 4px;
+  transition: background-color 0.4s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(37, 99, 235, 0.6);
+  background: var(--brand-primary) !important;
+}
+
+/* --- DYNAMIC THEME SELECTOR OVERRIDES --- */
+
+/* Background replacements */
+.bg-\[\#0A0B0E\],
+.bg-\[\#0A0B0E\]\/90,
+.bg-\[\#0A0B0E\]\/80,
+.bg-\[\#0A0B0E\]\/65,
+.bg-\[\#0A0B0E\]\/60 {
+  background-color: var(--brand-bg) !important;
+  transition: background-color 0.4s ease;
+}
+
+.bg-\[\#111319\],
+.bg-\[\#111319\]\/95,
+.bg-\[\#111319\]\/90,
+.bg-\[\#111319\]\/80 {
+  background-color: var(--brand-panel) !important;
+  transition: background-color 0.4s ease;
+}
+
+.bg-\[\#161920\],
+.bg-\[\#161920\]\/95,
+.bg-\[\#161920\]\/90,
+.bg-\[\#161920\]\/80 {
+  background-color: var(--brand-card) !important;
+  transition: background-color 0.4s ease;
+}
+
+/* Border replacements */
+.border-slate-800,
+.border-slate-800\/80,
+.border-slate-800\/60,
+.border-slate-805\/50,
+.border-slate-800\/50,
+.border-slate-800\/40,
+.border-slate-800\/35,
+.border-slate-900\/60 {
+  border-color: var(--brand-border) !important;
+  transition: border-color 0.4s ease;
+}
+
+/* Accent replacements */
+.text-blue-400,
+.text-blue-350,
+.text-blue-300,
+.text-cyan-400,
+.text-\[\#5FCEFF\]\/90 {
+  color: var(--brand-accent) !important;
+  transition: color 0.4s ease;
+}
+
+.bg-blue-600 {
+  background-color: var(--brand-primary) !important;
+  transition: background-color 0.4s ease;
+}
+
+.hover\:bg-blue-500:hover,
+.hover\:bg-blue-450:hover {
+  background-color: var(--brand-primary-hover) !important;
+}
+
+.bg-blue-600\/10 {
+  background-color: var(--brand-accent-glow) !important;
+  transition: background-color 0.4s ease;
+}
+
+.border-blue-500 {
+  border-color: var(--brand-primary) !important;
+  transition: border-color 0.4s ease;
+}
+
+.border-blue-500\/30,
+.border-blue-500\/40,
+.border-blue-500\/20 {
+  border-color: rgba(var(--brand-accent-rgb), 0.3) !important;
+  transition: border-color 0.4s ease;
+}
+
+.text-blue-500 {
+  color: var(--brand-primary) !important;
+  transition: color 0.4s ease;
 }

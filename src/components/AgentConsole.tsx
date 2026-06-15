@@ -32,6 +32,11 @@ export default function AgentConsole({
 
   const logsEndRef = useRef<HTMLDivElement>(null);
   const speechInterval = useRef<any>(null);
+  const recognitionRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (logsEndRef.current) {
@@ -39,27 +44,186 @@ export default function AgentConsole({
     }
   }, [executionLogs]);
 
-  // Handle Speech simulation
+  const isManualModelChange = useRef(false);
+
+  // Proactive automatic inference brain selection based on text context/triggers
+  useEffect(() => {
+    if (isManualModelChange.current) return;
+    const text = inputText.toLowerCase().trim();
+    if (!text) {
+      if (selectedModel !== "gemini-3.5-flash") {
+        setSelectedModel("gemini-3.5-flash");
+      }
+      return;
+    }
+
+    // Local/Offline triggers
+    if (
+      text.includes("offline") || 
+      text.includes("local") || 
+      text.includes("llama") || 
+      text.includes("private") || 
+      text.includes("secure") || 
+      text.includes("host") ||
+      text.includes("ollama")
+    ) {
+      if (selectedModel !== "ollama-local-llama3") {
+        setSelectedModel("ollama-local-llama3");
+      }
+    } 
+    // Complex reasoning triggers
+    else if (
+      text.includes("reason") || 
+      text.includes("complex") || 
+      text.includes("elaborate") || 
+      text.includes("explain") || 
+      text.includes("code") || 
+      text.includes("analyze") || 
+      text.includes("workflow") || 
+      text.includes("summarize") ||
+      text.includes("math") ||
+      text.includes("heavy") ||
+      text.includes("solve")
+    ) {
+      if (selectedModel !== "gemini-3.1-pro-preview") {
+        setSelectedModel("gemini-3.1-pro-preview");
+      }
+    } 
+    // Default fast core node
+    else {
+      if (selectedModel !== "gemini-3.5-flash") {
+        setSelectedModel("gemini-3.5-flash");
+      }
+    }
+  }, [inputText, selectedModel]);
+
+  const startConsoleAudioVolume = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxClass) {
+        const ctx = new AudioCtxClass();
+        audioContextRef.current = ctx;
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyserRef.current = analyser;
+        source.connect(analyser);
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const updateVol = () => {
+          if (!analyserRef.current) return;
+          analyserRef.current.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < bufferLength; i++) {
+            sum += dataArray[i];
+          }
+          const average = sum / bufferLength;
+          setSpeechVolume(Math.min(Math.max(Math.round(average * 2.2), 0), 100));
+          animationFrameRef.current = requestAnimationFrame(updateVol);
+        };
+        updateVol();
+      }
+    } catch (err) {
+      console.warn("Console mic meter inactive:", err);
+      speechInterval.current = setInterval(() => {
+        setSpeechVolume(Math.floor(Math.random() * 65) + 20);
+      }, 100);
+    }
+  };
+
+  const stopConsoleAudioVolume = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (speechInterval.current) {
+      clearInterval(speechInterval.current);
+      speechInterval.current = null;
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+  };
+
+  const startConsoleSpeech = () => {
+    const SpeechRecClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecClass) {
+      console.warn("SpeechRecognition unsupported.");
+      return;
+    }
+
+    try {
+      const rec = new SpeechRecClass();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "en-US";
+
+      rec.onresult = (event: any) => {
+        let text = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i] && event.results[i][0]) {
+            text += event.results[i][0].transcript;
+          }
+        }
+        if (text) {
+          setInputText(text);
+        }
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Handle Speech simulation & Real Speech-to-Text interaction
   const toggleSpeechRecording = () => {
     if (isRecordMode) {
-      clearInterval(speechInterval.current);
+      stopConsoleAudioVolume();
       setIsRecordMode(false);
       setSpeechVolume(0);
-      
-      // Seed a random useful instruction in trigger list
-      const commands = [
-        "Create folders for Images, Videos and Documents",
-        "Move PDFs to Reports and clean up temp caches",
-        "Open Chrome Browser and search for current weather info",
-        "Turn the volume down to 25% and lock computer"
-      ];
-      setInputText(commands[Math.floor(Math.random() * commands.length)]);
+
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
+        recognitionRef.current = null;
+      }
+
+      // If they didn't speak anything and input is empty, seed a command
+      setTimeout(() => {
+        setInputText(current => {
+          if (current.trim().length > 3) return current;
+          const commands = [
+            "Create folders for Images, Videos and Documents",
+            "Move PDFs to Reports and clean up temp caches",
+            "Open Chrome Browser and search for current weather info",
+            "Turn the volume down to 25% and lock computer"
+          ];
+          return commands[Math.floor(Math.random() * commands.length)];
+        });
+      }, 200);
+
     } else {
       setIsRecordMode(true);
-      setExecutionLogs((prev) => [...prev, "[Voice Unit] Initializing Whisper continuous listening codec..."]);
-      speechInterval.current = setInterval(() => {
-        setSpeechVolume(Math.floor(Math.random() * 80) + 10);
-      }, 100);
+      setInputText("");
+      setExecutionLogs((prev) => [...prev, "[Voice Unit] Initializing HTML5 speech recognition continuous listening codec... Speak now."]);
+      
+      startConsoleSpeech();
+      startConsoleAudioVolume();
     }
   };
 
@@ -97,6 +261,7 @@ export default function AgentConsole({
     } finally {
       setIsEvaluating(false);
       setInputText("");
+      isManualModelChange.current = false;
     }
   };
 
@@ -199,10 +364,24 @@ export default function AgentConsole({
           </div>
           <div className="grid grid-cols-2 gap-3 text-[11px] leading-relaxed">
             <div className="space-y-1">
-              <label className="text-slate-500 font-semibold block">Inference Brain</label>
+              <div className="flex items-center justify-between">
+                <label className="text-slate-500 font-semibold block">Inference Brain</label>
+                {isManualModelChange.current ? (
+                  <span className="text-[8px] px-1.5 py-0.2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 font-medium tracking-wider uppercase font-mono">
+                    Manual Override
+                  </span>
+                ) : (
+                  <span className="text-[8px] px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-medium tracking-wider uppercase font-mono animate-pulse">
+                    Auto Managed
+                  </span>
+                )}
+              </div>
               <select
                 value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
+                onChange={(e) => {
+                  setSelectedModel(e.target.value);
+                  isManualModelChange.current = true;
+                }}
                 className="w-full bg-[#161920]/80 border border-slate-800 rounded text-slate-300 p-1 font-mono outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="gemini-3.5-flash">Gemini 3.5 Flash (Core Node)</option>
