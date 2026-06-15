@@ -20,8 +20,10 @@ export default function App() {
   // HUD mode state & telemetry events logs state
   const [hudMode, setHudMode] = useState<boolean>(true);
   const [executionLogs, setExecutionLogs] = useState<string[]>([
+    "[Boot Sequence] System power-on detected. Initializing core modules...",
+    "[Greeting Protocol] Hello, Sir. TaskPilot AI Assistant online.",
     "[System Matrix] TaskPilot secure operating system simulator established.",
-    "[Voice Pipeline] Speech recognition & Synthesis modules standing by, Stuart.",
+    "[Voice Pipeline] Speech recognition & Synthesis modules standing by.",
     "[Automation Node] Control coordinates ready for keyboard/mouse simulation."
   ]);
 
@@ -43,6 +45,17 @@ export default function App() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [developerFiles, setDeveloperFiles] = useState<DeveloperFile[]>([]);
   const [activePlan, setActivePlan] = useState<TaskPlan | null>(null);
+  
+  // Real file system view state
+  const [useRealFileSystem, setUseRealFileSystem] = useState<boolean>(false);
+  const [realFileSystem, setRealFileSystem] = useState<DiskFile[]>([]);
+  const [realFileSystemLoading, setRealFileSystemLoading] = useState<boolean>(false);
+  
+  // Document viewing state
+  const [selectedDocumentPath, setSelectedDocumentPath] = useState<string | null>(null);
+  const [documentContent, setDocumentContent] = useState<string | null>(null);
+  const [documentLoading, setDocumentLoading] = useState<boolean>(false);
+  const [documentError, setDocumentError] = useState<string | null>(null);
 
   // --- FLOATING VOICE COMMAND PANEL STATE ---
   const [isFloatingRecording, setIsFloatingRecording] = useState(false);
@@ -66,6 +79,14 @@ export default function App() {
     read: boolean;
   }>>([
     {
+      id: "greeting",
+      type: "success",
+      title: "Hello, Sir",
+      message: "TaskPilot AI Assistant is now online and ready for your commands.",
+      timestamp: Date.now() - 5000,
+      read: false
+    },
+    {
       id: "init",
       type: "success",
       title: "System Feedback Core Ready",
@@ -82,7 +103,7 @@ export default function App() {
     message: string;
   }>>([]);
 
-  const [ttsText, setTtsText] = useState("TaskPilot automation dashboard loaded. Ready for operations, Stuart.");
+  const [ttsText, setTtsText] = useState("Hello, Sir. TaskPilot automation dashboard is now online. Ready for operations.");
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(true); // default muted to respect privacy but allow easy toggle
   const [isFeedbackDrawerOpen, setIsFeedbackDrawerOpen] = useState(false);
@@ -297,12 +318,71 @@ export default function App() {
     fetchStates();
     fetchDeveloperFiles();
     fetchWorkflows();
+    
+    // Trigger greeting toast on startup
+    const greetingTimer = setTimeout(() => {
+      setActiveToasts(prev => [...prev, {
+        id: "greeting-toast",
+        type: "success",
+        title: "🎯 System Online",
+        message: "Hello, Sir. TaskPilot AI Assistant is ready."
+      }]);
+      
+      // Set TTS to speak the greeting
+      setTtsText("Hello, Sir. TaskPilot automation dashboard is now online. Ready for your commands.");
+      setTtsSpeaking(true);
+      
+      // Auto-dismiss greeting toast after 8 seconds
+      const dismissTimer = setTimeout(() => {
+        setActiveToasts(prev => prev.filter(t => t.id !== "greeting-toast"));
+      }, 8000);
+      
+      return () => clearTimeout(dismissTimer);
+    }, 500);
+    
     return () => {
+      clearTimeout(greetingTimer);
       if (floatingSpeechInterval.current) {
         clearInterval(floatingSpeechInterval.current);
       }
     };
   }, []);
+
+  // Text-to-Speech Handler
+  useEffect(() => {
+    if (!ttsSpeaking || isMuted || !ttsText) {
+      return;
+    }
+
+    // Use Web Speech API
+    const synth = window.speechSynthesis;
+    
+    // Cancel any ongoing speech
+    synth.cancel();
+    
+    const utterance = new SpeechSynthesisUtterance(ttsText);
+    
+    // Set voice properties
+    utterance.rate = ttsSpeed; // 0.1 to 10
+    utterance.pitch = ttsPitch; // 0 to 2
+    utterance.volume = 1; // 0 to 1
+    
+    // Handle speech end
+    utterance.onend = () => {
+      setTtsSpeaking(false);
+    };
+    
+    utterance.onerror = () => {
+      setTtsSpeaking(false);
+    };
+    
+    // Speak the text
+    synth.speak(utterance);
+    
+    return () => {
+      synth.cancel();
+    };
+  }, [ttsSpeaking, ttsText, isMuted, ttsSpeed, ttsPitch]);
 
   const fetchStates = async () => {
     try {
@@ -333,6 +413,79 @@ export default function App() {
       setWorkflows(data);
     } catch (err) {
       console.error("Error load workflow list:", err);
+    }
+  };
+
+  const fetchRealFileSystem = async (startPath?: string) => {
+    try {
+      setRealFileSystemLoading(true);
+      const endpoint = startPath ? `/api/file-system/browse` : `/api/file-system/desktop`;
+      const options: RequestInit = {
+        method: startPath ? "POST" : "GET",
+        headers: { "Content-Type": "application/json" }
+      };
+      
+      if (startPath) {
+        options.body = JSON.stringify({ dirPath: startPath });
+      }
+
+      const response = await fetch(endpoint, options);
+      const data = await response.json();
+      
+      if (data.success && data.files) {
+        setRealFileSystem(data.files);
+        triggerAutoFeedback("success", "Real Files Loaded", `Loaded files from ${data.path}`);
+      } else {
+        triggerAutoFeedback("error", "Load Failed", data.error || "Failed to load real files");
+      }
+    } catch (err) {
+      console.error("Error loading real file system:", err);
+      triggerAutoFeedback("error", "Load Error", `Failed to access real files: ${err}`);
+    } finally {
+      setRealFileSystemLoading(false);
+    }
+  };
+
+  const browsePath = async (dirPath: string) => {
+    await fetchRealFileSystem(dirPath);
+  };
+
+  const fetchDocumentContent = async (filePath: string) => {
+    try {
+      setDocumentLoading(true);
+      setDocumentError(null);
+      setSelectedDocumentPath(filePath);
+      
+      const response = await fetch("/api/file-system/content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filePath })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success && data.canPreview) {
+        setDocumentContent(data.content);
+        triggerAutoFeedback(
+          "success",
+          "Document Loaded",
+          `Opened: ${data.fileName}`,
+          `Document preview loaded for ${data.fileName}`
+        );
+      } else {
+        setDocumentContent(null);
+        setDocumentError(data.fileType === "pdf" || data.fileType === "office" 
+          ? `${data.fileType.toUpperCase()} files cannot be previewed (${data.fileName})` 
+          : "Cannot preview this file type");
+        triggerAutoFeedback("info", "Preview Not Available", `${data.fileName} is a binary file`);
+      }
+    } catch (err) {
+      console.error("Error fetching document:", err);
+      setDocumentError(`Failed to load document`);
+      setDocumentContent(null);
+      triggerAutoFeedback("error", "Load Failed", "Could not read document content");
+    } finally {
+      setDocumentLoading(false);
     }
   };
 
@@ -918,6 +1071,17 @@ export default function App() {
                     onCaptureScreenshot={handleCaptureScreenshotSimulated}
                     activeTab={simulatorTab}
                     setActiveTab={setSimulatorTab}
+                    useRealFileSystem={useRealFileSystem}
+                    setUseRealFileSystem={setUseRealFileSystem}
+                    realFileSystem={realFileSystem}
+                    realFileSystemLoading={realFileSystemLoading}
+                    fetchRealFileSystem={fetchRealFileSystem}
+                    browsePath={browsePath}
+                    fetchDocumentContent={fetchDocumentContent}
+                    selectedDocumentPath={selectedDocumentPath}
+                    documentContent={documentContent}
+                    documentLoading={documentLoading}
+                    documentError={documentError}
                   />
                 </div>
 
@@ -969,6 +1133,17 @@ export default function App() {
                       onCaptureScreenshot={handleCaptureScreenshotSimulated}
                       activeTab={simulatorTab}
                       setActiveTab={setSimulatorTab}
+                      useRealFileSystem={useRealFileSystem}
+                      setUseRealFileSystem={setUseRealFileSystem}
+                      realFileSystem={realFileSystem}
+                      realFileSystemLoading={realFileSystemLoading}
+                      fetchRealFileSystem={fetchRealFileSystem}
+                      browsePath={browsePath}
+                      fetchDocumentContent={fetchDocumentContent}
+                      selectedDocumentPath={selectedDocumentPath}
+                      documentContent={documentContent}
+                      documentLoading={documentLoading}
+                      documentError={documentError}
                     />
                   </div>
 

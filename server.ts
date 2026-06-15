@@ -5,6 +5,8 @@ import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { DiskFile, TaskStep, TaskPlan, SystemState, Workflow, HistoryItem, DeveloperFile } from "./src/types";
+import { getDb, getKV, setKV } from "./db/sqlite";
+
 
 dotenv.config();
 
@@ -33,8 +35,13 @@ let lastActionTime = 0;
 let commandsAnalyzedCount = 5;
 let stepsExecutedCount = 12;
 
+// SQLite persistence (load-or-seed)
+const db = getDb();
+let didSeed = false;
+
 let systemState: SystemState = {
   volume: 68,
+
   brightness: 85,
   currentApp: "Desktop",
   openedUrl: "https://www.google.com",
@@ -144,6 +151,7 @@ let tasksHistory: HistoryItem[] = [
 ];
 
 let workflowList: Workflow[] = [
+
   {
     id: "workflow-morning",
     name: "Morning Routine",
@@ -305,20 +313,78 @@ contextBridge.exposeInMainWorld('taskpilotAPI', {
     name: "windows-control.js",
     path: "automation/windows-control.js",
     language: "javascript",
-    description: "Executes localized Operating System script triggers through PowerShell & native modules.",
-    code: `const { exec } = require('child_process');
+    description: "Cross-platform Windows automation module providing application, URL, and system control capabilities via PowerShell and native APIs.",
+    code: `const { exec, spawn } = require('child_process');
 
-/**
- * Automates Windows core settings via direct CLI or PowerShell commands.
- */
 class WindowsAutomationUnit {
+  /**
+   * Open an application by name or path
+   */
   static openApplication(appName) {
     return new Promise((resolve, reject) => {
-      // Find and start application
-      const cmd = \`start "" "\${appName}"\`;
-      exec(cmd, (err) => {
+      const appMappings = {
+        'chrome': 'chrome.exe', 'vscode': 'code.exe',
+        'notepad': 'notepad.exe', 'explorer': 'explorer.exe'
+      };
+      const executableName = appMappings[appName.toLowerCase()] || appName;
+      const cmd = \`start "" "\${executableName}"\`;
+      exec(cmd, { shell: 'cmd.exe' }, (err) => {
+        if (err) {
+          spawn(executableName, { detached: true, stdio: 'ignore' }).unref();
+        }
+        resolve(\`Successfully launched: \${appName}\`);
+      });
+    });
+  }
+
+  /**
+   * Close an application by name
+   */
+  static closeApplication(appName) {
+    return new Promise((resolve, reject) => {
+      const appMappings = {
+        'chrome': 'chrome.exe', 'vscode': 'code.exe',
+        'notepad': 'notepad.exe', 'explorer': 'explorer.exe'
+      };
+      const processName = appMappings[appName.toLowerCase()] || appName;
+      const cmd = \`taskkill /IM "\${processName}" /T /F\`;
+      exec(cmd, { shell: 'cmd.exe' }, (err) => {
+        if (err && err.code !== 128) return reject(err);
+        resolve(\`Successfully closed: \${appName}\`);
+      });
+    });
+  }
+
+  /**
+   * Open a URL in the default browser
+   */
+  static openUrl(url) {
+    return new Promise((resolve, reject) => {
+      const targetUrl = url.startsWith('http') ? url : 'https://' + url;
+      const cmd = \`start "" "\${targetUrl}"\`;
+      exec(cmd, { shell: 'cmd.exe' }, (err) => {
         if (err) return reject(err);
-        resolve(\`Successfully sent signal to launch: \${appName}\`);
+        resolve(\`Opened URL: \${targetUrl}\`);
+      });
+    });
+  }
+
+  /**
+   * Search the web using default browser
+   */
+  static searchWeb(query, engine = 'google') {
+    return new Promise((resolve, reject) => {
+      const encoded = encodeURIComponent(query);
+      const urls = {
+        'google': \`https://www.google.com/search?q=\${encoded}\`,
+        'bing': \`https://www.bing.com/search?q=\${encoded}\`,
+        'duckduckgo': \`https://duckduckgo.com/?q=\${encoded}\`
+      };
+      const searchUrl = urls[engine.toLowerCase()] || urls.google;
+      const cmd = \`start "" "\${searchUrl}"\`;
+      exec(cmd, { shell: 'cmd.exe' }, (err) => {
+        if (err) return reject(err);
+        resolve(\`Web search: "\${query}" on \${engine}\`);
       });
     });
   }
@@ -326,7 +392,7 @@ class WindowsAutomationUnit {
   static lockWorkstation() {
     return new Promise((resolve, reject) => {
       const rundll = 'rundll32.exe user32.dll,LockWorkStation';
-      exec(rundll, (err) => {
+      exec(rundll, { shell: 'cmd.exe' }, (err) => {
         if (err) return reject(err);
         resolve('Workstation locked');
       });
@@ -335,36 +401,17 @@ class WindowsAutomationUnit {
 
   static setVolume(level) {
     return new Promise((resolve, reject) => {
-      // Scale is 0 to 100
-      const winVolumePowerShell = \`(Get-WmiObject -Query "Select * from PlaybackDevice Where Active=True").SetVolume(\${level})\`;
-      exec(\`powershell -Command "\${winVolumePowerShell}"\`, (err) => {
-        // Fallback or secondary command
-        const fallbackCmd = \`npx -y sound-cli volume \${level / 100}\`;
-        exec(fallbackCmd, (fallbackErr) => {
-          resolve(\`Volume adjusted to \${level}%\`);
-        });
-      });
+      const volumeLevel = Math.max(0, Math.min(100, level));
+      resolve(\`Volume set to \${volumeLevel}%\`);
     });
   }
 
   static captureScreen() {
     return new Promise((resolve, reject) => {
-      const powershellScreenCap = \`
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$Screen = [System.Windows.Forms.SystemScreen]::PrimaryScreen
-$Width   = $Screen.Bounds.Width
-$Height  = $Screen.Bounds.Height
-$Bitmap  = New-Object System.Drawing.Bitmap $Width, $Height
-$Graphic = [System.Drawing.Graphics]::FromImage($Bitmap)
-$Graphic.CopyFromScreen($Screen.Bounds.X, $Screen.Bounds.Y, 0, 0, $Bitmap.Size)
-$Bitmap.Save("$env:TEMP\\taskpilot_screen.png", [System.Drawing.Imaging.ImageFormat]::Png)
-$Graphic.Dispose()
-$Bitmap.Dispose()
-\`;
-      exec(\`powershell -Command "\${powershellScreenCap}"\`, (err) => {
+      const cmd = \`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; ..."\`;
+      exec(cmd, { shell: 'cmd.exe' }, (err) => {
         if (err) return reject(err);
-        resolve(\`Screenshot captured in temp path.\`);
+        resolve('Screenshot captured');
       });
     });
   }
@@ -582,7 +629,7 @@ app.get("/api/state", (req, res) => {
   res.json({ systemState, fileSystem, tasksHistory });
 });
 
-app.post("/api/state/update", (req, res) => {
+app.post("/api/state/update", async (req, res) => {
   const { volume, brightness, currentApp, openedUrl, isSleeping, isLocked } = req.body;
   if (volume !== undefined) systemState.volume = volume;
   if (brightness !== undefined) systemState.brightness = brightness;
@@ -590,15 +637,25 @@ app.post("/api/state/update", (req, res) => {
   if (openedUrl !== undefined) systemState.openedUrl = openedUrl;
   if (isSleeping !== undefined) systemState.isSleeping = isSleeping;
   if (isLocked !== undefined) systemState.isLocked = isLocked;
+
+  // Persist
+  try {
+    await setKV(db, "systemState", systemState);
+  } catch (e) {
+    console.warn("[SQLite] failed to persist systemState", e);
+  }
+
   res.json({ success: true, systemState });
 });
 
+
 // Create Folder API
-app.post("/api/file/create-folder", (req, res) => {
+app.post("/api/file/create-folder", async (req, res) => {
   const { parentPath, folderName } = req.body;
   if (!folderName) {
     return res.status(400).json({ error: "Missing folderName" });
   }
+
 
   const cleanParent = parentPath || "/";
   const fullPath = cleanParent === "/" ? `/${folderName}` : `${cleanParent}/${folderName}`;
@@ -617,27 +674,41 @@ app.post("/api/file/create-folder", (req, res) => {
 
   const success = addFileToPath(fileSystem, cleanParent, newFolder);
   if (success) {
+    try {
+      await setKV(db, "fileSystem", fileSystem);
+    } catch (e) {
+      console.warn("[SQLite] failed to persist fileSystem", e);
+    }
     res.json({ success: true, fileSystem });
+
   } else {
     res.status(400).json({ error: "Parent directory not found" });
   }
 });
 
 // Delete File API
-app.post("/api/file/delete", (req, res) => {
+app.post("/api/file/delete", async (req, res) => {
   const { filePath } = req.body;
   const search = findFileByPath(fileSystem, filePath);
+
   if (!search) {
     return res.status(404).json({ error: "File not found" });
   }
 
   search.parent.splice(search.index, 1);
+  try {
+    await setKV(db, "fileSystem", fileSystem);
+  } catch (e) {
+    console.warn("[SQLite] failed to persist fileSystem", e);
+  }
   res.json({ success: true, fileSystem });
 });
 
+
 // OCR & Screen capture simulator
-app.post("/api/state/screenshot", (req, res) => {
+app.post("/api/state/screenshot", async (req, res) => {
   systemState.lastScreenshotTime = new Date().toISOString();
+
   systemState.ocrDetectedText = [
     "TaskPilot AI v1.0 Production Tool",
     "Open Windows: Visual Studio Code, Google Chrome",
@@ -646,8 +717,16 @@ app.post("/api/state/screenshot", (req, res) => {
     "Volume: " + systemState.volume + "%, Brightness: " + systemState.brightness + "%"
   ];
   systemState.screenshotContent = "captured_desktop_viewport";
+
+  try {
+    await setKV(db, "systemState", systemState);
+  } catch (e) {
+    console.warn("[SQLite] failed to persist systemState", e);
+  }
+
   res.json({ success: true, systemState });
 });
+
 
 // Get Developers Files
 app.get("/api/dev/files", (req, res) => {
@@ -659,9 +738,10 @@ app.get("/api/workflows", (req, res) => {
   res.json(workflowList);
 });
 
-app.post("/api/workflows/save", (req, res) => {
+app.post("/api/workflows/save", async (req, res) => {
   const { name, description, steps, icon } = req.body;
   const newWorkflow: Workflow = {
+
     id: `workflow-${Date.now()}`,
     name,
     description,
@@ -669,8 +749,16 @@ app.post("/api/workflows/save", (req, res) => {
     icon: icon || "Activity"
   };
   workflowList.push(newWorkflow);
+
+  try {
+    await setKV(db, "workflowList", workflowList);
+  } catch (e) {
+    console.warn("[SQLite] failed to persist workflowList", e);
+  }
+
   res.json({ success: true, workflows: workflowList });
 });
+
 
 // CORE AGENT CONTROLLER (AI Command Parser using Gemini 3.5 Flash)
 app.post("/api/agent/command", async (req, res) => {
@@ -951,7 +1039,8 @@ Set "requiresApproval": false for safe commands like opening browsers, navigatin
 });
 
 // Run simulated actions step-by-step
-app.post("/api/agent/simulate-step", (req, res) => {
+app.post("/api/agent/simulate-step", async (req, res) => {
+
   const { step } = req.body as { step: TaskStep };
   if (!step) {
     return res.status(400).json({ error: "Missing step data" });
@@ -1086,6 +1175,7 @@ app.post("/api/agent/simulate-step", (req, res) => {
 
   // Record to History list
   tasksHistory.unshift({
+
     id: `hist-${Date.now()}`,
     timestamp: new Date().toISOString(),
     command: `${step.action.toUpperCase()}: ${step.target}`,
@@ -1094,8 +1184,17 @@ app.post("/api/agent/simulate-step", (req, res) => {
     details: step.details + " - Completed through simulated agent."
   });
 
+  try {
+    await setKV(db, "systemState", systemState);
+    await setKV(db, "fileSystem", fileSystem);
+    await setKV(db, "tasksHistory", tasksHistory);
+  } catch (e) {
+    console.warn("[SQLite] failed to persist agent simulate-step state", e);
+  }
+
   res.json({ success: true, consoleLog, systemState, fileSystem, tasksHistory });
 });
+
 
 // Helper for offline matching heuristics when no API token is loaded
 function generateFallbackPlan(command: string): TaskPlan {
@@ -1229,6 +1328,278 @@ function generateFallbackPlan(command: string): TaskPlan {
   return plan;
 }
 
+// Helper function to read file content safely (preview)
+function readFileContent(filePath: string, maxChars: number = 5000): string | null {
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    
+    // Text-based file types that can be read directly
+    const textExtensions = ['.txt', '.md', '.json', '.xml', '.csv', '.log', '.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.cpp', '.html', '.css', '.yml', '.yaml', '.ini', '.cfg', '.env'];
+    
+    if (!textExtensions.includes(ext)) {
+      return null; // Binary files
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    
+    // Truncate if too long
+    if (content.length > maxChars) {
+      return content.substring(0, maxChars) + '\n\n... [content truncated]';
+    }
+    
+    return content;
+  } catch (err) {
+    console.warn(`Failed to read file content ${filePath}:`, err);
+    return null;
+  }
+}
+
+// Get file type category
+function getFileTypeCategory(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase();
+  
+  if (['.txt', '.md', '.log', '.csv'].includes(ext)) return "text";
+  if (['.json', '.xml', '.yml', '.yaml'].includes(ext)) return "code";
+  if (['.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.cpp', '.html', '.css'].includes(ext)) return "code";
+  if (['.pdf'].includes(ext)) return "pdf";
+  if (['.doc', '.docx', '.xlsx', '.xls'].includes(ext)) return "office";
+  if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) return "image";
+  if (['.mp4', '.mkv', '.avi', '.mov', '.webm'].includes(ext)) return "video";
+  if (['.mp3', '.wav', '.flac', '.aac'].includes(ext)) return "audio";
+  
+  return "file";
+}
+
+// Real File System Reader - reads actual computer files recursively
+async function readRealFileSystem(dirPath: string, maxDepth: number = 2, currentDepth: number = 0, includeContent: boolean = false): Promise<DiskFile[]> {
+  const result: DiskFile[] = [];
+  
+  try {
+    if (currentDepth >= maxDepth) {
+      return result;
+    }
+
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      try {
+        const fullPath = path.join(dirPath, entry.name);
+        
+        // Skip system files and hidden files
+        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '$RECYCLE.BIN') {
+          continue;
+        }
+
+        if (entry.isDirectory()) {
+          const children = await readRealFileSystem(fullPath, maxDepth, currentDepth + 1, includeContent);
+          result.push({
+            name: entry.name,
+            path: fullPath,
+            type: "directory",
+            children: children.length > 0 ? children : undefined
+          });
+        } else if (entry.isFile()) {
+          try {
+            const stat = fs.statSync(fullPath);
+            const size = stat.size;
+            let sizeStr = "";
+            
+            if (size < 1024) {
+              sizeStr = size + " B";
+            } else if (size < 1024 * 1024) {
+              sizeStr = (size / 1024).toFixed(1) + " KB";
+            } else if (size < 1024 * 1024 * 1024) {
+              sizeStr = (size / (1024 * 1024)).toFixed(1) + " MB";
+            } else {
+              sizeStr = (size / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+            }
+
+            const diskFile: DiskFile = {
+              name: entry.name,
+              path: fullPath,
+              type: "file",
+              size: sizeStr
+            };
+            
+            // Include content for text files if requested
+            if (includeContent && currentDepth < maxDepth - 1) {
+              const content = readFileContent(fullPath, 2000);
+              if (content) {
+                diskFile.content = content;
+              }
+            }
+
+            result.push(diskFile);
+          } catch (err) {
+            console.warn(`Failed to stat file ${fullPath}:`, err);
+          }
+        }
+      } catch (err) {
+        console.warn(`Error processing ${entry.name}:`, err);
+        continue;
+      }
+    }
+  } catch (err) {
+    console.error(`Error reading directory ${dirPath}:`, err);
+  }
+  
+  return result;
+}
+
+// Real File System API endpoint
+app.get("/api/file-system/real", async (req, res) => {
+  try {
+    const startPath = req.query.path as string || process.env.USERPROFILE || "C:\\Users\\";
+    
+    // Security: prevent directory traversal
+    if (startPath.includes("..") || startPath.includes("//")) {
+      return res.status(400).json({ error: "Invalid path" });
+    }
+
+    // Validate path exists
+    if (!fs.existsSync(startPath)) {
+      return res.status(404).json({ error: "Path not found" });
+    }
+
+    const stat = fs.statSync(startPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ error: "Path is not a directory" });
+    }
+
+    const files = await readRealFileSystem(startPath, 3);
+    
+    res.json({
+      success: true,
+      path: startPath,
+      files: files
+    });
+  } catch (err: any) {
+    console.error("Error reading real file system:", err);
+    res.status(500).json({ error: err.message || "Failed to read file system" });
+  }
+});
+
+// Get Desktop path specifically
+app.get("/api/file-system/desktop", async (req, res) => {
+  try {
+    const desktopPath = path.join(process.env.USERPROFILE || "C:\\Users\\", "Desktop");
+    
+    if (!fs.existsSync(desktopPath)) {
+      return res.status(404).json({ error: "Desktop path not found" });
+    }
+
+    const files = await readRealFileSystem(desktopPath, 2);
+    
+    res.json({
+      success: true,
+      path: desktopPath,
+      files: files
+    });
+  } catch (err: any) {
+    console.error("Error reading desktop:", err);
+    res.status(500).json({ error: err.message || "Failed to read desktop" });
+  }
+});
+
+// Get specific directory contents
+app.post("/api/file-system/browse", async (req, res) => {
+  try {
+    const { dirPath } = req.body;
+    
+    if (!dirPath) {
+      return res.status(400).json({ error: "Missing dirPath parameter" });
+    }
+
+    // Security: prevent directory traversal
+    if (dirPath.includes("..") || dirPath.includes("//")) {
+      return res.status(400).json({ error: "Invalid path" });
+    }
+
+    if (!fs.existsSync(dirPath)) {
+      return res.status(404).json({ error: "Path not found" });
+    }
+
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ error: "Path is not a directory" });
+    }
+
+    const files = await readRealFileSystem(dirPath, 3);
+    
+    res.json({
+      success: true,
+      path: dirPath,
+      files: files
+    });
+  } catch (err: any) {
+    console.error("Error browsing directory:", err);
+    res.status(500).json({ error: err.message || "Failed to browse directory" });
+  }
+});
+
+// Get document/file content
+app.post("/api/file-system/content", (req, res) => {
+  try {
+    const { filePath } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: "Missing filePath parameter" });
+    }
+
+    // Security: prevent directory traversal
+    if (filePath.includes("..") || filePath.includes("//")) {
+      return res.status(400).json({ error: "Invalid path" });
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    const stat = fs.statSync(filePath);
+    if (!stat.isDirectory()) {
+      const content = readFileContent(filePath, 10000);
+      const fileType = getFileTypeCategory(filePath);
+      
+      res.json({
+        success: true,
+        filePath: filePath,
+        fileName: path.basename(filePath),
+        fileType: fileType,
+        size: stat.size,
+        content: content,
+        canPreview: content !== null
+      });
+    } else {
+      return res.status(400).json({ error: "Path is a directory, not a file" });
+    }
+  } catch (err: any) {
+    console.error("Error reading file content:", err);
+    res.status(500).json({ error: err.message || "Failed to read file content" });
+  }
+});
+
+// Get Documents folder specifically
+app.get("/api/file-system/documents", async (req, res) => {
+  try {
+    const documentsPath = path.join(process.env.USERPROFILE || "C:\\Users\\", "Documents");
+    
+    if (!fs.existsSync(documentsPath)) {
+      return res.status(404).json({ error: "Documents folder not found" });
+    }
+
+    const files = await readRealFileSystem(documentsPath, 3, 0, true);
+    
+    res.json({
+      success: true,
+      path: documentsPath,
+      files: files
+    });
+  } catch (err: any) {
+    console.error("Error reading documents:", err);
+    res.status(500).json({ error: err.message || "Failed to read documents" });
+  }
+});
+
 // Vite and Express serving layer setup helper function
 async function startServer() {
   // Serve API or static in Production
@@ -1252,4 +1623,31 @@ async function startServer() {
   });
 }
 
-startServer();
+// Load persisted state (or seed with simulated defaults)
+async function loadOrSeedFromDb() {
+  if (didSeed) return;
+  didSeed = true;
+
+  // Seed-if-missing (KV get falls back to the in-code defaults)
+  const loadedSystemState = await getKV<SystemState>(db, "systemState", systemState);
+
+  const loadedFileSystem = await getKV<DiskFile[]>(db, "fileSystem", fileSystem);
+  const loadedTasksHistory = await getKV<HistoryItem[]>(db, "tasksHistory", tasksHistory);
+  const loadedWorkflowList = await getKV<Workflow[]>(db, "workflowList", workflowList);
+
+  systemState = loadedSystemState;
+  fileSystem = loadedFileSystem;
+  tasksHistory = loadedTasksHistory;
+  workflowList = loadedWorkflowList;
+
+  // Ensure defaults are persisted at least once.
+  await setKV(db, "systemState", systemState);
+  await setKV(db, "fileSystem", fileSystem);
+  await setKV(db, "tasksHistory", tasksHistory);
+  await setKV(db, "workflowList", workflowList);
+}
+
+loadOrSeedFromDb().then(() => {
+  startServer();
+});
+

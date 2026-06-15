@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Folder, File, Terminal, Globe, Volume2, Sun, Laptop, ShieldCheck, HelpCircle, ArrowRight, Eye, RefreshCw, Layers } from "lucide-react";
+import { Folder, File, Terminal, Globe, Volume2, Sun, Laptop, ShieldCheck, HelpCircle, ArrowRight, Eye, RefreshCw, Layers, Toggle2, HardDrive, Loader, AlertCircle } from "lucide-react";
 import { DiskFile, SystemState } from "../types";
 
 interface DesktopSimulatorProps {
@@ -11,6 +11,21 @@ interface DesktopSimulatorProps {
   onCaptureScreenshot: () => void;
   activeTab: "files" | "browser" | "screen";
   setActiveTab: (tab: "files" | "browser" | "screen") => void;
+  
+  // Real file system props
+  useRealFileSystem?: boolean;
+  setUseRealFileSystem?: (value: boolean) => void;
+  realFileSystem?: DiskFile[];
+  realFileSystemLoading?: boolean;
+  fetchRealFileSystem?: () => void;
+  browsePath?: (path: string) => void;
+  
+  // Document viewing props
+  fetchDocumentContent?: (filePath: string) => void;
+  selectedDocumentPath?: string | null;
+  documentContent?: string | null;
+  documentLoading?: boolean;
+  documentError?: string | null;
 }
 
 export default function DesktopSimulator({
@@ -21,11 +36,25 @@ export default function DesktopSimulator({
   onDeleteFile,
   onCaptureScreenshot,
   activeTab,
-  setActiveTab
+  setActiveTab,
+  useRealFileSystem = false,
+  setUseRealFileSystem = () => {},
+  realFileSystem = [],
+  realFileSystemLoading = false,
+  fetchRealFileSystem = () => {},
+  browsePath = () => {},
+  fetchDocumentContent = () => {},
+  selectedDocumentPath = null,
+  documentContent = null,
+  documentLoading = false,
+  documentError = null
 }: DesktopSimulatorProps) {
   const [selectedFolder, setSelectedFolder] = useState<string>("/");
   const [currentBrowserUrl, setCurrentBrowserUrl] = useState<string>(systemState.openedUrl);
   const [browserHistory, setBrowserHistory] = useState<string[]>([systemState.openedUrl]);
+  
+  // Display files based on mode
+  const displayedFileSystem = useRealFileSystem ? realFileSystem : fileSystem;
 
   // Keep browser URL input bar synchronized with external automated browser actions
   useEffect(() => {
@@ -40,24 +69,31 @@ export default function DesktopSimulator({
 
   // Navigate back to parent folder helper
   const navigateToParent = () => {
-    if (selectedFolder === "/") return;
-    const parts = selectedFolder.split("/").filter(Boolean);
+    if (selectedFolder === "/" || selectedFolder === "") return;
+    const parts = selectedFolder.split("\\").filter(Boolean);
     parts.pop();
-    setSelectedFolder("/" + parts.join("/"));
+    const newPath = parts.join("\\");
+    setSelectedFolder(newPath || "C:\\");
   };
 
   // Find files in current subdirectory
   const getCurrentFiles = (): DiskFile[] => {
-    if (selectedFolder === "/") return fileSystem;
-    const parts = selectedFolder.split("/").filter(Boolean);
-    let current = fileSystem;
-    for (const part of parts) {
-      const match = current.find((item) => item.name === part && item.type === "directory");
-      if (match && match.children) {
-        current = match.children;
+    if (useRealFileSystem) {
+      // For real file system, just return top-level items directly
+      return displayedFileSystem;
+    } else {
+      // For simulated file system (original logic)
+      if (selectedFolder === "/") return fileSystem;
+      const parts = selectedFolder.split("/").filter(Boolean);
+      let current = fileSystem;
+      for (const part of parts) {
+        const match = current.find((item) => item.name === part && item.type === "directory");
+        if (match && match.children) {
+          current = match.children;
+        }
       }
+      return current;
     }
-    return current;
   };
 
   const handleBrowserGo = () => {
@@ -151,14 +187,43 @@ export default function DesktopSimulator({
         {/* FILE SYSTEM VIEW */}
         {activeTab === "files" && (
           <div className="space-y-4">
+            {/* File System Mode Toggle */}
+            <div className="flex items-center justify-between gap-3 p-3 bg-[#161920]/40 border border-slate-800/60 rounded-lg">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${useRealFileSystem ? "bg-emerald-500" : "bg-amber-500"} animate-pulse`}></div>
+                <span className="text-xs font-semibold text-slate-300">
+                  {useRealFileSystem ? "Viewing Real Computer Files" : "Viewing Simulated Files"}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                {useRealFileSystem && (
+                  <button
+                    onClick={() => fetchRealFileSystem()}
+                    disabled={realFileSystemLoading}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-blue-400 bg-blue-500/10 hover:bg-blue-500/15 ring-1 ring-blue-500/20 rounded font-medium transition disabled:opacity-50"
+                  >
+                    {realFileSystemLoading && <Loader className="w-3 h-3 animate-spin" />}
+                    {realFileSystemLoading ? "Loading..." : "Load Desktop"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setUseRealFileSystem(!useRealFileSystem)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-slate-700/40 hover:bg-slate-700/60 ring-1 ring-slate-600/40 rounded font-medium transition"
+                >
+                  <HardDrive className="w-3.5 h-3.5" />
+                  {useRealFileSystem ? "Show Simulated" : "Show Real Files"}
+                </button>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2 text-xs py-1 px-2.5 bg-[#0A0B0E] rounded border border-slate-800/55 font-mono">
               <span className="text-slate-500 font-semibold text-[10px] uppercase font-sans">Current Path:</span>
-              <span className="text-amber-500 font-semibold">{selectedFolder}</span>
+              <span className="text-amber-500 font-semibold truncate">{useRealFileSystem ? (selectedFolder || "C:\\") : selectedFolder}</span>
             </div>
 
             {/* Folder Actions Panel */}
             <div className="flex items-center justify-between">
-              {selectedFolder !== "/" && (
+              {((useRealFileSystem && selectedFolder) || (!useRealFileSystem && selectedFolder !== "/")) && (
                 <button
                   onClick={navigateToParent}
                   className="flex items-center gap-1 px-2.5 py-1 text-xs text-blue-400 bg-blue-500/10 hover:bg-blue-500/15 ring-1 ring-blue-500/20 rounded font-medium transition"
@@ -167,7 +232,7 @@ export default function DesktopSimulator({
                 </button>
               )}
               <span className="text-[11px] text-slate-500 font-sans">
-                {currentFolderFiles.length} item{currentFolderFiles.length !== 1 && "s"} inside
+                {getCurrentFiles().length} item{getCurrentFiles().length !== 1 && "s"} inside
               </span>
             </div>
 
@@ -184,18 +249,24 @@ export default function DesktopSimulator({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-sans">
                 {currentFolderFiles.map((file) => {
                   const isDir = file.type === "directory";
+                  const isSelected = selectedDocumentPath === file.path;
                   return (
                     <div
                       key={file.path}
                       onClick={() => {
                         if (isDir) {
                           setSelectedFolder(file.path);
+                        } else if (useRealFileSystem) {
+                          // Open document content viewer for real files
+                          fetchDocumentContent(file.path);
                         }
                       }}
                       className={`group relative p-3 border rounded-lg transition duration-200 ${
-                        isDir
+                        isSelected
+                          ? "bg-blue-600/15 border-blue-500/60 ring-1 ring-blue-500/40"
+                          : isDir
                           ? "bg-[#161920]/60 border-slate-800 hover:border-slate-700/80 cursor-pointer"
-                          : "bg-[#161920]/20 border-slate-800/80 hover:border-slate-800"
+                          : "bg-[#161920]/20 border-slate-800/80 hover:border-slate-800 cursor-pointer"
                       }`}
                     >
                       <div className="flex items-start gap-2.5">
@@ -239,6 +310,39 @@ export default function DesktopSimulator({
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Document Content Viewer Panel */}
+            {useRealFileSystem && selectedDocumentPath && (
+              <div className="mt-4 p-4 bg-[#0A0B0E] border border-slate-800/60 rounded-lg max-h-[400px] flex flex-col">
+                <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-800">
+                  <span className="text-xs font-semibold text-slate-200">
+                    📄 {selectedDocumentPath.split('\\').pop()}
+                  </span>
+                  <button
+                    onClick={() => setSelectedDocumentPath(null)}
+                    className="text-slate-500 hover:text-slate-300 text-xs"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                
+                {documentLoading ? (
+                  <div className="flex items-center justify-center py-8 text-slate-400">
+                    <Loader className="w-4 h-4 animate-spin mr-2" />
+                    Loading document...
+                  </div>
+                ) : documentError ? (
+                  <div className="flex items-center gap-2 py-4 px-3 bg-amber-500/10 border border-amber-500/20 rounded text-amber-400 text-xs">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>{documentError}</span>
+                  </div>
+                ) : documentContent ? (
+                  <div className="flex-1 overflow-y-auto text-[11px] font-mono text-slate-300 whitespace-pre-wrap break-words leading-relaxed">
+                    {documentContent}
+                  </div>
+                ) : null}
               </div>
             )}
 
